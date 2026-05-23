@@ -3,7 +3,7 @@ const cors = require('cors');
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 
 const app = express();
-app.use(cors());
+app.use(cors({ origin: '*' }));
 app.use(express.json());
 
 // Health check
@@ -17,7 +17,7 @@ app.post('/create-payment-intent', async (req, res) => {
     const { amount, email, name, address } = req.body;
 
     const paymentIntent = await stripe.paymentIntents.create({
-      amount: Math.round(amount * 100), // convert to cents
+      amount: Math.round(amount * 100),
       currency: 'usd',
       receipt_email: email,
       description: 'Stain Studios Order',
