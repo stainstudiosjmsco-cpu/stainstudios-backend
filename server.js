@@ -43,9 +43,19 @@ app.post('/send-shipping', async (req, res) => {
       data: {
         type: 'event',
         attributes: {
-          metric: { data: { type: 'metric', attributes: { name: 'Order Shipped' } } },
-          profile: { data: { type: 'profile', attributes: { email, first_name } } },
-          properties: { tracking_number, tracking_url, order_items: order_items || '', first_name }
+          metric: {
+            name: 'Order Shipped'
+          },
+          profile: {
+            email: email,
+            first_name: first_name
+          },
+          properties: {
+            tracking_number: tracking_number,
+            tracking_url: tracking_url,
+            order_items: order_items || '',
+            first_name: first_name
+          }
         }
       }
     });
@@ -57,7 +67,7 @@ app.post('/send-shipping', async (req, res) => {
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Klaviyo-API-Key ${process.env.KLAVIYO_PRIVATE_KEY}`,
-        'revision': '2023-02-22',
+        'revision': '2023-10-15',
         'Content-Length': Buffer.byteLength(payload)
       }
     };
@@ -66,6 +76,7 @@ app.post('/send-shipping', async (req, res) => {
       let data = '';
       klaviyoRes.on('data', chunk => data += chunk);
       klaviyoRes.on('end', () => {
+        console.log('Klaviyo status:', klaviyoRes.statusCode, data);
         if(klaviyoRes.statusCode === 202 || klaviyoRes.statusCode === 200){
           res.json({ success: true });
         } else {
