@@ -32,51 +32,103 @@ app.post('/create-payment-intent', async (req, res) => {
   }
 });
 
+// Helper to make Klaviyo API calls
+function klaviyoRequest(method, path, payload) {
+  return new Promise((resolve, reject) => {
+    const data = payload ? JSON.stringify(payload) : null;
+    const options = {
+      hostname: 'a.klaviyo.com',
+      path: path,
+      method: method,
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Klaviyo-API-Key ${process.env.KLAVIYO_PRIVATE_KEY}`,
+        'revision': '2023-10-15',
+      }
+    };
+    if (data) options.headers['Content-Length'] = Buffer.byteLength(data);
+
+    const req = https.request(options, (res) => {
+      let body = '';
+      res.on('data', chunk => body += chunk);
+      res.on('end', () => resolve({ status: res.statusCode, body }));
+    });
+    req.on('error', reject);
+    if (data) req.write(data);
+    req.end();
+  });
+}
+
 app.post('/send-shipping', async (req, res) => {
   try {
     const { email, first_name, tracking_number, tracking_url, order_items } = req.body;
 
-    // Use Klaviyo v1 track endpoint — simpler and more reliable
-    const payload = JSON.stringify({
-      token: process.env.KLAVIYO_PUBLIC_KEY || 'Ri2utB',
-      event: 'Order Shipped',
-      customer_properties: {
-        '$email': email,
-        '$first_name': first_name
-      },
-      properties: {
-        tracking_number: tracking_number,
-        tracking_url: tracking_url,
-        order_items: order_items || '',
-        first_name: first_name
+    // Step 1: Create or update the profile in Klaviyo
+    const profilePayload = {
+      data: {
+        type: 'profile',
+        attributes: {
+          email: email,
+          first_name: first_name
+        }
       }
-    });
+    };
+    const profileRes = await klaviyoRequest('POST', '/api/profiles/', profilePayload);
+    console.log('Profile response:', profileRes.status, profileRes.body);
 
-    const encoded = Buffer.from(payload).toString('base64');
-    const path = `/api/track?data=${encoded}`;
+    // Get profile ID from response or conflict response
+    let profileId = null;
+    try {
+      const profileData = JSON.parse(profileRes.body);
+      if (profileRes.status === 201) {
+        profileId = profileData.data.id;
+      } else if (profileRes.status === 409) {
+        // Profile already exists
+        profileId = profileData.errors[0].meta.duplicate_profile_id;
+      }
+    } catch(e) { console.log('Profile parse error', e); }
 
-    const options = {
-      hostname: 'a.klaviyo.com',
-      path: path,
-      method: 'GET',
-      headers: { 'Content-Type': 'application/json' }
+    console.log('Profile ID:', profileId);
+
+    // Step 2: Send the Order Shipped event
+    const eventPayload = {
+      data: {
+        type: 'event',
+        attributes: {
+          metric: {
+            data: {
+              type: 'metric',
+              attributes: { name: 'Order Shipped' }
+            }
+          },
+          profile: {
+            data: {
+              type: 'profile',
+              attributes: {
+                email: email,
+                first_name: first_name
+              }
+            }
+          },
+          properties: {
+            tracking_number: tracking_number,
+            tracking_url: tracking_url,
+            order_items: order_items || '',
+            first_name: first_name
+          },
+          value: 0
+        }
+      }
     };
 
-    const klaviyoReq = https.request(options, (klaviyoRes) => {
-      let data = '';
-      klaviyoRes.on('data', chunk => data += chunk);
-      klaviyoRes.on('end', () => {
-        console.log('Klaviyo response:', klaviyoRes.statusCode, data);
-        if(data === '1' || klaviyoRes.statusCode === 200){
-          res.json({ success: true });
-        } else {
-          res.status(400).json({ error: data });
-        }
-      });
-    });
+    const eventRes = await klaviyoRequest('POST', '/api/events/', eventPayload);
+    console.log('Event response:', eventRes.status, eventRes.body);
 
-    klaviyoReq.on('error', err => res.status(500).json({ error: err.message }));
-    klaviyoReq.end();
+    if (eventRes.status === 202 || eventRes.status === 200 || eventRes.status === 201) {
+      res.json({ success: true });
+    } else {
+      res.status(400).json({ error: eventRes.body });
+    }
 
   } catch(err) {
     console.error(err);
