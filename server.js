@@ -136,5 +136,53 @@ app.post('/send-shipping', async (req, res) => {
   }
 });
 
+app.post('/send-order-confirmation', async (req, res) => {
+  try {
+    const { email, first_name, order_items, order_total } = req.body;
+
+    const eventPayload = {
+      data: {
+        type: 'event',
+        attributes: {
+          metric: {
+            data: {
+              type: 'metric',
+              attributes: { name: 'Placed Order' }
+            }
+          },
+          profile: {
+            data: {
+              type: 'profile',
+              attributes: {
+                email: email,
+                first_name: first_name
+              }
+            }
+          },
+          properties: {
+            first_name: first_name,
+            order_items: order_items || '',
+            order_total: order_total || '',
+            estimated_delivery: '8–12 business days'
+          },
+          value: 0
+        }
+      }
+    };
+
+    const eventRes = await klaviyoRequest('POST', '/api/events/', eventPayload);
+    console.log('Order confirmation event:', eventRes.status, eventRes.body);
+
+    if(eventRes.status === 202 || eventRes.status === 200 || eventRes.status === 201){
+      res.json({ success: true });
+    } else {
+      res.status(400).json({ error: eventRes.body });
+    }
+  } catch(err){
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
