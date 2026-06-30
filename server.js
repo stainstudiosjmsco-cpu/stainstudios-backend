@@ -2,13 +2,52 @@ const express = require('express');
 const cors = require('cors');
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 const https = require('https');
+const fs = require('fs');
+const path = require('path');
 
 const app = express();
 app.use(cors({ origin: '*' }));
 app.use(express.json());
 
+const PHOTOS_FILE = path.join(__dirname, 'site-photos.json');
+
+function loadPhotos() {
+  try {
+    return JSON.parse(fs.readFileSync(PHOTOS_FILE, 'utf8'));
+  } catch (e) {
+    return { hero: '', banner: '', editorial: '', about: '' };
+  }
+}
+
+function savePhotos(data) {
+  fs.writeFileSync(PHOTOS_FILE, JSON.stringify(data, null, 2));
+}
+
 app.get('/', (req, res) => {
   res.send('Stain Studios backend is running.');
+});
+
+// Get current site photos — called by index.html on page load
+app.get('/site-photos', (req, res) => {
+  res.json(loadPhotos());
+});
+
+// Update a site photo — called by admin.html
+app.post('/site-photos', (req, res) => {
+  try {
+    const { key, url } = req.body;
+    const allowed = ['hero', 'banner', 'editorial', 'about'];
+    if (!allowed.includes(key)) {
+      return res.status(400).json({ error: 'Invalid photo key' });
+    }
+    const photos = loadPhotos();
+    photos[key] = url || '';
+    savePhotos(photos);
+    res.json({ success: true, photos });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 app.post('/create-payment-intent', async (req, res) => {
