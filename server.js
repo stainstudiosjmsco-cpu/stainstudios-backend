@@ -23,11 +23,12 @@ const PHOTOS_FILE = path.join(__dirname, 'site-photos.json');
 const PRODUCTS_FILE = path.join(__dirname, 'products.json');
 const CARTS_FILE = path.join(__dirname, 'carts.json');
 
-function httpJsonRequest(method, url, payload) {
-  return new Promise((resolve, reject) => {
-    if (!url) return resolve(null);
+function httpJsonRequest(method, url, payload, timeoutMs = 15000) {
+  return new Promise((resolve) => {
+    if (!url) return resolve({ ok: false, data: null, error: 'No storage URL configured' });
     const data = payload ? JSON.stringify(payload) : null;
-    const u = new URL(url);
+    let u;
+    try { u = new URL(url); } catch (e) { return resolve({ ok: false, data: null, error: 'Invalid storage URL' }); }
     const options = {
       hostname: u.hostname,
       path: u.pathname + u.search,
@@ -35,14 +36,20 @@ function httpJsonRequest(method, url, payload) {
       headers: { 'Content-Type': 'application/json' }
     };
     if (data) options.headers['Content-Length'] = Buffer.byteLength(data);
+
     const req = https.request(options, (res) => {
       let body = '';
       res.on('data', chunk => body += chunk);
       res.on('end', () => {
-        try { resolve(JSON.parse(body)); } catch (e) { resolve(null); }
+        const ok = res.statusCode >= 200 && res.statusCode < 300;
+        try { resolve({ ok, data: JSON.parse(body), error: ok ? null : `Storage returned ${res.statusCode}: ${body.slice(0,200)}` }); }
+        catch (e) { resolve({ ok, data: null, error: ok ? null : `Storage returned ${res.statusCode}: ${body.slice(0,200)}` }); }
       });
     });
-    req.on('error', () => resolve(null));
+
+    req.on('error', (err) => resolve({ ok: false, data: null, error: err.message }));
+    req.setTimeout(timeoutMs, () => { req.destroy(); resolve({ ok: false, data: null, error: 'Storage request timed out' }); });
+
     if (data) req.write(data);
     req.end();
   });
@@ -50,38 +57,45 @@ function httpJsonRequest(method, url, payload) {
 
 async function loadPhotos() {
   const remote = await httpJsonRequest('GET', NPOINT_PHOTOS);
-  if (remote) { try { fs.writeFileSync(PHOTOS_FILE, JSON.stringify(remote)); } catch(e){} return remote; }
+  if (remote.ok && remote.data) { try { fs.writeFileSync(PHOTOS_FILE, JSON.stringify(remote.data)); } catch(e){} return remote.data; }
   try { return JSON.parse(fs.readFileSync(PHOTOS_FILE, 'utf8')); }
   catch (e) { return { hero: '', banner: '', editorial: '', about: '' }; }
 }
 
 async function savePhotos(data) {
   try { fs.writeFileSync(PHOTOS_FILE, JSON.stringify(data, null, 2)); } catch(e){}
-  await httpJsonRequest('POST', NPOINT_PHOTOS, data);
+  // npoint.io requires PUT to overwrite an existing bin's content — POST does not update it.
+  const result = await httpJsonRequest('PUT', NPOINT_PHOTOS, data);
+  if (!result.ok) console.error('Failed to save photos to npoint:', result.error);
+  return result;
 }
 
 async function loadProducts() {
   const remote = await httpJsonRequest('GET', NPOINT_PRODUCTS);
-  if (remote) { try { fs.writeFileSync(PRODUCTS_FILE, JSON.stringify(remote)); } catch(e){} return remote; }
+  if (remote.ok && remote.data) { try { fs.writeFileSync(PRODUCTS_FILE, JSON.stringify(remote.data)); } catch(e){} return remote.data; }
   try { return JSON.parse(fs.readFileSync(PRODUCTS_FILE, 'utf8')); }
   catch (e) { return []; }
 }
 
 async function saveProductsFile(data) {
   try { fs.writeFileSync(PRODUCTS_FILE, JSON.stringify(data, null, 2)); } catch(e){}
-  await httpJsonRequest('POST', NPOINT_PRODUCTS, data);
+  const result = await httpJsonRequest('PUT', NPOINT_PRODUCTS, data);
+  if (!result.ok) console.error('Failed to save products to npoint:', result.error);
+  return result;
 }
 
 async function loadCarts() {
   const remote = await httpJsonRequest('GET', NPOINT_CARTS);
-  if (remote) { try { fs.writeFileSync(CARTS_FILE, JSON.stringify(remote)); } catch(e){} return remote; }
+  if (remote.ok && remote.data) { try { fs.writeFileSync(CARTS_FILE, JSON.stringify(remote.data)); } catch(e){} return remote.data; }
   try { return JSON.parse(fs.readFileSync(CARTS_FILE, 'utf8')); }
   catch (e) { return {}; }
 }
 
 async function saveCarts(data) {
   try { fs.writeFileSync(CARTS_FILE, JSON.stringify(data, null, 2)); } catch(e){}
-  await httpJsonRequest('POST', NPOINT_CARTS, data);
+  const result = await httpJsonRequest('PUT', NPOINT_CARTS, data);
+  if (!result.ok) console.error('Failed to save carts to npoint:', result.error);
+  return result;
 }
 
 app.get('/', (req, res) => {
@@ -103,7 +117,8 @@ app.post('/site-photos', async (req, res) => {
     }
     const photos = await loadPhotos();
     photos[key] = url || '';
-    await savePhotos(photos);
+    const result = await savePhotos(photos);
+    if (!result.ok) return res.status(500).json({ error: result.error || 'Could not save to persistent storage' });
     res.json({ success: true, photos });
   } catch (err) {
     console.error(err);
@@ -124,7 +139,8 @@ app.post('/products', async (req, res) => {
     product.id = Date.now();
     product.addedAt = new Date().toLocaleDateString();
     products.unshift(product);
-    await saveProductsFile(products);
+    const result = await saveProductsFile(products);
+    if (!result.ok) return res.status(500).json({ error: result.error || 'Could not save to persistent storage — product was not saved' });
     res.json({ success: true, product });
   } catch (err) {
     console.error(err);
@@ -141,7 +157,8 @@ app.put('/products/:id', async (req, res) => {
     const idx = products.findIndex(p => p.id === id);
     if (idx === -1) return res.status(404).json({ error: 'Product not found' });
     products[idx] = { ...products[idx], ...updates, id };
-    await saveProductsFile(products);
+    const result = await saveProductsFile(products);
+    if (!result.ok) return res.status(500).json({ error: result.error || 'Could not save to persistent storage' });
     res.json({ success: true, product: products[idx] });
   } catch (err) {
     console.error(err);
@@ -155,7 +172,8 @@ app.delete('/products/:id', async (req, res) => {
     const id = parseInt(req.params.id);
     let products = await loadProducts();
     products = products.filter(p => p.id !== id);
-    await saveProductsFile(products);
+    const result = await saveProductsFile(products);
+    if (!result.ok) return res.status(500).json({ error: result.error || 'Could not save to persistent storage' });
     res.json({ success: true });
   } catch (err) {
     console.error(err);
@@ -182,7 +200,8 @@ app.post('/cart/:email', async (req, res) => {
     const { cart } = req.body;
     const carts = await loadCarts();
     carts[email] = cart || [];
-    await saveCarts(carts);
+    const result = await saveCarts(carts);
+    if (!result.ok) return res.status(500).json({ error: result.error || 'Could not save to persistent storage' });
     res.json({ success: true });
   } catch (err) {
     console.error(err);
