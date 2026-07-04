@@ -213,6 +213,18 @@ app.delete('/products/:id', async (req, res) => {
   }
 });
 
+// Get ALL reviews for ALL products in one call — used by index.html on page load
+// so it doesn't need to make a separate request per product (much faster).
+app.get('/reviews', async (req, res) => {
+  try {
+    const allReviews = await loadReviews();
+    res.json({ reviews: allReviews });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Get all reviews for a product — called by index.html when opening a product / reviews popup
 app.get('/reviews/:productId', async (req, res) => {
   try {
