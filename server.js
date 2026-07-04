@@ -180,6 +180,29 @@ app.put('/products/reorder', async (req, res) => {
   }
 });
 
+// Decrement stock after a completed order — called by index.html right after
+// a successful payment (card, Apple/Google Pay, or PayPal), so stock stays
+// accurate without needing to manually update it in the admin panel.
+app.post('/products/decrement-stock', async (req, res) => {
+  try {
+    const { items } = req.body; // [{ productId, size, qty }]
+    if (!Array.isArray(items) || !items.length) return res.status(400).json({ error: 'items array is required' });
+    const products = await loadProducts();
+    items.forEach(({ productId, size, qty }) => {
+      const product = products.find(p => p.id === productId);
+      if (product && product.stock && typeof product.stock[size] === 'number') {
+        product.stock[size] = Math.max(0, product.stock[size] - (parseInt(qty) || 0));
+      }
+    });
+    const result = await saveProductsFile(products);
+    if (!result.ok) return res.status(500).json({ error: result.error || 'Could not save updated stock to persistent storage' });
+    res.json({ success: true, products });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Update an existing product — called by admin.html
 app.put('/products/:id', async (req, res) => {
   try {
