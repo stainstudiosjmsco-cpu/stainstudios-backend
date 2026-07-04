@@ -19,6 +19,7 @@ const FIREBASE_URL = (process.env.FIREBASE_DB_URL || '').replace(/\/$/, ''); // 
 const PHOTOS_FILE = path.join(__dirname, 'site-photos.json');
 const PRODUCTS_FILE = path.join(__dirname, 'products.json');
 const CARTS_FILE = path.join(__dirname, 'carts.json');
+const REVIEWS_FILE = path.join(__dirname, 'reviews.json');
 
 function firebaseRequest(method, key, payload, timeoutMs = 15000) {
   return new Promise((resolve) => {
@@ -78,6 +79,20 @@ async function saveProductsFile(data) {
   try { fs.writeFileSync(PRODUCTS_FILE, JSON.stringify(data, null, 2)); } catch(e){}
   const result = await firebaseRequest('PUT', 'products', data);
   if (!result.ok) console.error('Failed to save products to Firebase:', result.error);
+  return result;
+}
+
+async function loadReviews() {
+  const remote = await firebaseRequest('GET', 'reviews');
+  if (remote.ok && remote.data) { try { fs.writeFileSync(REVIEWS_FILE, JSON.stringify(remote.data)); } catch(e){} return remote.data; }
+  try { return JSON.parse(fs.readFileSync(REVIEWS_FILE, 'utf8')); }
+  catch (e) { return {}; }
+}
+
+async function saveReviews(data) {
+  try { fs.writeFileSync(REVIEWS_FILE, JSON.stringify(data, null, 2)); } catch(e){}
+  const result = await firebaseRequest('PUT', 'reviews', data);
+  if (!result.ok) console.error('Failed to save reviews to Firebase:', result.error);
   return result;
 }
 
@@ -173,6 +188,45 @@ app.delete('/products/:id', async (req, res) => {
     const result = await saveProductsFile(products);
     if (!result.ok) return res.status(500).json({ error: result.error || 'Could not save to persistent storage' });
     res.json({ success: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Get all reviews for a product — called by index.html when opening a product / reviews popup
+app.get('/reviews/:productId', async (req, res) => {
+  try {
+    const productId = req.params.productId;
+    const allReviews = await loadReviews();
+    res.json({ reviews: allReviews[productId] || [] });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Submit a new review for a product — called by index.html "Write a Review" form
+app.post('/reviews/:productId', async (req, res) => {
+  try {
+    const productId = req.params.productId;
+    const { name, rating, comment } = req.body;
+    const ratingNum = parseInt(rating);
+    if (!name || !comment || !ratingNum || ratingNum < 1 || ratingNum > 5) {
+      return res.status(400).json({ error: 'Name, comment, and a rating from 1-5 are required.' });
+    }
+    const allReviews = await loadReviews();
+    if (!Array.isArray(allReviews[productId])) allReviews[productId] = [];
+    const review = {
+      name: name.trim(),
+      rating: ratingNum,
+      comment: comment.trim(),
+      date: new Date().toLocaleDateString()
+    };
+    allReviews[productId].unshift(review);
+    const result = await saveReviews(allReviews);
+    if (!result.ok) return res.status(500).json({ error: result.error || 'Could not save review to persistent storage' });
+    res.json({ success: true, reviews: allReviews[productId] });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: err.message });
