@@ -237,6 +237,7 @@ app.post('/reviews/:productId', async (req, res) => {
     const allReviews = await loadReviews();
     if (!Array.isArray(allReviews[productId])) allReviews[productId] = [];
     const review = {
+      id: Date.now() + '-' + Math.random().toString(36).slice(2, 8),
       name: name.trim(),
       rating: ratingNum,
       comment: comment.trim(),
@@ -245,6 +246,22 @@ app.post('/reviews/:productId', async (req, res) => {
     allReviews[productId].unshift(review);
     const result = await saveReviews(allReviews);
     if (!result.ok) return res.status(500).json({ error: result.error || 'Could not save review to persistent storage' });
+    res.json({ success: true, reviews: allReviews[productId] });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Delete a single review — called by admin.html Reviews tab
+app.delete('/reviews/:productId/:reviewId', async (req, res) => {
+  try {
+    const { productId, reviewId } = req.params;
+    const allReviews = await loadReviews();
+    if (!Array.isArray(allReviews[productId])) return res.status(404).json({ error: 'No reviews found for this product' });
+    allReviews[productId] = allReviews[productId].filter(r => r.id !== reviewId);
+    const result = await saveReviews(allReviews);
+    if (!result.ok) return res.status(500).json({ error: result.error || 'Could not save to persistent storage' });
     res.json({ success: true, reviews: allReviews[productId] });
   } catch (err) {
     console.error(err);
