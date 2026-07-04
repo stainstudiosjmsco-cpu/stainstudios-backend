@@ -161,6 +161,25 @@ app.post('/products', async (req, res) => {
   }
 });
 
+// Reorder products — called by admin.html when the site owner drags/moves products to change display order
+app.put('/products/reorder', async (req, res) => {
+  try {
+    const { orderedIds } = req.body;
+    if (!Array.isArray(orderedIds)) return res.status(400).json({ error: 'orderedIds must be an array' });
+    const products = await loadProducts();
+    const byId = new Map(products.map(p => [p.id, p]));
+    const reordered = orderedIds.map(id => byId.get(id)).filter(Boolean);
+    // Include any products not listed (safety net) at the end, preserving their relative order
+    products.forEach(p => { if (!orderedIds.includes(p.id)) reordered.push(p); });
+    const result = await saveProductsFile(reordered);
+    if (!result.ok) return res.status(500).json({ error: result.error || 'Could not save new order to persistent storage' });
+    res.json({ success: true, products: reordered });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Update an existing product — called by admin.html
 app.put('/products/:id', async (req, res) => {
   try {
