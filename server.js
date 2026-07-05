@@ -124,7 +124,7 @@ app.get('/site-photos', async (req, res) => {
 app.post('/site-photos', async (req, res) => {
   try {
     const { key, url } = req.body;
-    const allowed = ['hero', 'banner', 'editorial', 'about', 'editorialEyebrow', 'editorialTitle', 'editorialBody', 'collections'];
+    const allowed = ['hero', 'banner', 'editorial', 'about', 'editorialEyebrow', 'editorialTitle', 'editorialBody', 'collections', 'linkPreview'];
     if (!allowed.includes(key)) {
       return res.status(400).json({ error: 'Invalid photo key' });
     }
