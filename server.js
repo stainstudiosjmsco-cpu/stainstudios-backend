@@ -20,6 +20,7 @@ const PHOTOS_FILE = path.join(__dirname, 'site-photos.json');
 const PRODUCTS_FILE = path.join(__dirname, 'products.json');
 const CARTS_FILE = path.join(__dirname, 'carts.json');
 const REVIEWS_FILE = path.join(__dirname, 'reviews.json');
+const SHIPPED_ORDERS_FILE = path.join(__dirname, 'shipped-orders.json');
 
 function firebaseRequest(method, key, payload, timeoutMs = 15000) {
   return new Promise((resolve) => {
@@ -93,6 +94,20 @@ async function saveReviews(data) {
   try { fs.writeFileSync(REVIEWS_FILE, JSON.stringify(data, null, 2)); } catch(e){}
   const result = await firebaseRequest('PUT', 'reviews', data);
   if (!result.ok) console.error('Failed to save reviews to Firebase:', result.error);
+  return result;
+}
+
+async function loadShippedOrders() {
+  const remote = await firebaseRequest('GET', 'shippedOrders');
+  if (remote.ok && remote.data) { try { fs.writeFileSync(SHIPPED_ORDERS_FILE, JSON.stringify(remote.data)); } catch(e){} return remote.data; }
+  try { return JSON.parse(fs.readFileSync(SHIPPED_ORDERS_FILE, 'utf8')); }
+  catch (e) { return {}; }
+}
+
+async function saveShippedOrders(data) {
+  try { fs.writeFileSync(SHIPPED_ORDERS_FILE, JSON.stringify(data, null, 2)); } catch(e){}
+  const result = await firebaseRequest('PUT', 'shippedOrders', data);
+  if (!result.ok) console.error('Failed to save shipped orders to Firebase:', result.error);
   return result;
 }
 
@@ -326,6 +341,71 @@ app.post('/cart/:email', async (req, res) => {
     const result = await saveCarts(carts);
     if (!result.ok) return res.status(500).json({ error: result.error || 'Could not save to persistent storage' });
     res.json({ success: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Formspree form ID, taken from your form URL: https://formspree.io/f/xredkvqz
+const FORMSPREE_FORM_ID = 'xredkvqz';
+
+function formspreeRequest(path) {
+  return new Promise((resolve) => {
+    const options = {
+      hostname: 'formspree.io',
+      path: path,
+      method: 'GET',
+      headers: { 'Authorization': `Bearer ${process.env.FORMSPREE_API_KEY || ''}` }
+    };
+    const req = https.request(options, (res) => {
+      let body = '';
+      res.on('data', chunk => body += chunk);
+      res.on('end', () => {
+        const ok = res.statusCode >= 200 && res.statusCode < 300;
+        try { resolve({ ok, data: JSON.parse(body), error: ok ? null : `Formspree returned ${res.statusCode}: ${body.slice(0,300)}` }); }
+        catch (e) { resolve({ ok, data: null, error: ok ? null : `Formspree returned ${res.statusCode}: ${body.slice(0,300)}` }); }
+      });
+    });
+    req.on('error', (err) => resolve({ ok: false, data: null, error: err.message }));
+    req.end();
+  });
+}
+
+// Get recent orders — called by admin.html's Orders tab, pulls straight from
+// your Formspree submissions so you don't have to type orders in by hand.
+app.get('/orders', async (req, res) => {
+  if (!process.env.FORMSPREE_API_KEY) {
+    return res.status(500).json({ error: "FORMSPREE_API_KEY isn't set on the server. In Formspree, go to your form's Settings > enable 'HTTP API' to get a key, then add it as an environment variable named FORMSPREE_API_KEY in Render." });
+  }
+  const result = await formspreeRequest(`/api/0/forms/${FORMSPREE_FORM_ID}/submissions?limit=100`);
+  if (!result.ok) return res.status(500).json({ error: result.error || 'Could not fetch orders from Formspree' });
+  res.json(result.data);
+});
+
+// Get which orders have been marked shipped — called by admin.html Orders tab
+app.get('/orders/shipped', async (req, res) => {
+  try {
+    const shipped = await loadShippedOrders();
+    res.json({ shipped });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Mark an order shipped/unshipped — orderKey is the order's unique _date
+// timestamp from Formspree, since Formspree submissions don't expose an id.
+app.post('/orders/shipped', async (req, res) => {
+  try {
+    const { orderKey, shipped } = req.body;
+    if (!orderKey) return res.status(400).json({ error: 'orderKey is required' });
+    const shippedOrders = await loadShippedOrders();
+    if (shipped) shippedOrders[orderKey] = true;
+    else delete shippedOrders[orderKey];
+    const result = await saveShippedOrders(shippedOrders);
+    if (!result.ok) return res.status(500).json({ error: result.error || 'Could not save to persistent storage' });
+    res.json({ success: true, shipped: shippedOrders });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: err.message });
